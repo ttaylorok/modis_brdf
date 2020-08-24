@@ -1,6 +1,6 @@
 var collection = ee.ImageCollection('MODIS/006/MYD09GA')
   .filterBounds(roi)
-  .filterDate('2018-01-01', '2018-4-01');
+  .filterDate('2018-08-01', '2018-11-01');
 
 var visParams = {bands : ['sur_refl_b01', 'sur_refl_b04', 'sur_refl_b03'],
                 min : 0, max : 6000};
@@ -26,8 +26,8 @@ function maskMODIS(image) {
 
 var cloudsRemoved = collection.map(maskMODIS);
 
-Map.addLayer(collection.first(),visParams,'modis');
-Map.addLayer(cloudsRemoved.first(),visParams,'modis_mask');
+//Map.addLayer(collection.first(),visParams,'modis');
+//Map.addLayer(cloudsRemoved.first(),visParams,'modis_mask');
  
 var modis = collection.first();
 
@@ -91,13 +91,38 @@ var addKernels = function(image){
   
   var out1 = image.select(['sur_refl_b01','sur_refl_b02','sur_refl_b03',
   'sur_refl_b04','sur_refl_b05','sur_refl_b06','sur_refl_b07'])
-  .addBands([Kvol,Ksparse])
+  .addBands([ee.Image(1),Kvol,Ksparse])
   
   return out1.rename(['sur_refl_b01','sur_refl_b02','sur_refl_b03',
   'sur_refl_b04','sur_refl_b05','sur_refl_b06','sur_refl_b07',
-  'Kvol','Ksparse'])
+  'ones','Kvol','Ksparse'])
 }
 
 var withKernels = cloudsRemoved.map(addKernels);
 Map.addLayer(withKernels, {}, 'withKernels');
 
+// Convert to an array. Give the axes names for more readable code.
+var array = withKernels.toArray();
+var imageAxis = 0;
+var bandAxis = 1;
+ 
+// Slice off the year and ndvi, and solve for the coefficients.
+var x = array.arraySlice(bandAxis, 7, 10);
+var y = array.arraySlice(bandAxis, 0);
+var fit = x.matrixSolve(y);
+print(fit);
+//Map.addLayer(fit,{},'fit');
+//Map.addLayer(x,{},'x');
+//Map.addLayer(y,{},'y');
+
+var mm = x.matrixMultiply(fit);
+print('mm',mm);
+//Map.addLayer(mm,{},'mm');
+
+var fiso = fit.arrayGet([0, 0]);
+var fvol = fit.arrayGet([1, 0]);
+var fgeo = fit.arrayGet([2, 0]);
+
+Map.addLayer(fiso, {}, 'fiso');
+Map.addLayer(fvol, {}, 'fvol');
+Map.addLayer(fgeo, {}, 'fgeo');
