@@ -24,8 +24,11 @@ var calcKernel = function(theta_i1, theta_v1, phi_i1, phi_v1){
   var h_b = 2;
   var b_r = 1;
   
-  var theta_ip = (theta_i.tan().multiply(b_r)).atan();
-  var theta_vp = (theta_v.tan().multiply(b_r)).atan();
+  //var theta_ip = (theta_i.tan().multiply(b_r)).atan();
+  //var theta_vp = (theta_v.tan().multiply(b_r)).atan();
+
+  var theta_ip = theta_i.toDouble();
+  var theta_vp = theta_v.toDouble();
   
   var D = (theta_ip.tan().multiply(theta_ip.tan())
     .add(theta_vp.tan().multiply(theta_vp.tan()))
@@ -58,8 +61,16 @@ var calcKernel = function(theta_i1, theta_v1, phi_i1, phi_v1){
     .subtract(theta_vp.cos().pow(-1))
     .add((cos_xip.add(1)).multiply(theta_v.cos().pow(-1)).multiply(0.5)); 
     
-  var out = Kvol.addBands(Ksparse);
-  return out.rename(['Kvol','Ksparse'])
+  var out = Kvol.addBands(Ksparse)
+    .addBands(theta_ip)
+    .addBands(theta_vp)
+    .addBands(D)
+    .addBands(cos_t)
+    .addBands(t)
+    .addBands(O)
+    .addBands(cos_xip)
+  return out.rename(['Kvol','Ksparse','theta_ip','theta_vp',
+  'D','cost_t','t','O','cos_xip'])
 }
 
 var createPlot = function(sza,phi_i1,phi_v1){
@@ -76,15 +87,16 @@ var createPlot = function(sza,phi_i1,phi_v1){
   var chart2 = ui.Chart.image.series(ic,mypoint,ee.Reducer.first(),10,'angle')
     .setOptions({title: 'Hehehe wheoeoeoe',
       hAxis: {'title': 'orig'},
-      vAxis: {'title': 'orig', viewWindow : {'min' : -3, 'max' : 3}},
+      vAxis: {'title': 'orig', viewWindow : {'min' : -3, 'max' : 3}},//
       pointSize: 5,
   });
   print(chart2);
   return ic
 }
 
-// 180 is principal plane, 90 is cross plane?
-var ic = createPlot(60,0,-90);
+//principal plane, pi = 0 or 180
+//cross principal plane, pi = 90 or 270
+var ic = createPlot(33,0,180);
 
 Map.addLayer(ee.Image(Math.PI).cos(),{},'power')
 Map.addLayer(ic,{},'ic')
