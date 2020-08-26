@@ -4,7 +4,7 @@ var calcKernel = function(theta_i1, theta_v1, phi_i1, phi_v1){
   var theta_v = ee.Image(theta_v1).multiply(Math.PI/180); // view zenith angle
   var phi_i = ee.Image(phi_i1).multiply(Math.PI/180);
   var phi_v = ee.Image(phi_v1).multiply(Math.PI/180);
-  var phi_r = phi_v.subtract(phi_i); // WHICH WAY IS POSITIVE???
+  var phi_r = phi_v.subtract(Math.PI).subtract(phi_i)//phi_v.subtract(phi_i); // WHICH WAY IS POSITIVE???
   
   // phase angle scattering
   var cos_xi = theta_i.cos()
@@ -74,20 +74,28 @@ var calcKernel = function(theta_i1, theta_v1, phi_i1, phi_v1){
 }
 
 var createPlot = function(sza,phi_i1,phi_v1){
-  var c1 = calcKernel(sza,-90,phi_i1,phi_v1).set({'angle':-90});
-  var c2 = calcKernel(sza,-60,phi_i1,phi_v1).set({'angle':-60});
-  var c3 = calcKernel(sza,-30,phi_i1,phi_v1).set({'angle':-30});
-  var c4 = calcKernel(sza,0,phi_i1,phi_v1).set({'angle':0});
-  var c5 = calcKernel(sza,30,phi_i1,phi_v1).set({'angle':30});
-  var c6 = calcKernel(sza,60,phi_i1,phi_v1).set({'angle':60});
-  var c7 = calcKernel(sza,90,phi_i1,phi_v1).set({'angle':90});
+  var imageList = [calcKernel(sza,-90,phi_i1,phi_v1).set({'theta_v':-90,'theta_i' :sza})];
+  for (var i = -80; i <= 90; i = i + 10){
+    imageList.push(calcKernel(sza,i,phi_i1,phi_v1).set({'theta_v':i,'theta_i' :sza}));
+  }
+  //var c1 = calcKernel(sza,-90,phi_i1,phi_v1).set({'theta_v':-90,'theta_i' :sza});
+  //var c2 = calcKernel(sza,-60,phi_i1,phi_v1).set({'theta_v':-60,'theta_i' :sza});
+  //var c3 = calcKernel(sza,-30,phi_i1,phi_v1).set({'theta_v':-30,'theta_i' :sza});
+  //var c4 = calcKernel(sza,0,phi_i1,phi_v1).set({'theta_v':0,'theta_i' :sza});
+  //var c5 = calcKernel(sza,30,phi_i1,phi_v1).set({'theta_v':30,'theta_i' :sza});
+  //var c6 = calcKernel(sza,60,phi_i1,phi_v1).set({'theta_v':60,'theta_i' :sza});
+  //var c7 = calcKernel(sza,90,phi_i1,phi_v1).set({'theta_v':90,'theta_i' :sza});
   //Map.addLayer(test, {}, 'test')
   
-  var ic = ee.ImageCollection([c1,c2,c3,c4,c5,c6,c7]);
-  var chart2 = ui.Chart.image.series(ic,mypoint,ee.Reducer.first(),10,'angle')
-    .setOptions({title: 'Hehehe wheoeoeoe',
-      hAxis: {'title': 'orig'},
-      vAxis: {'title': 'orig', viewWindow : {'min' : -3, 'max' : 3}},//
+  var ic = ee.ImageCollection(imageList).select(['Ksparse', 'Kvol']);
+  var chart2 = ui.Chart.image.series(ic,mypoint,ee.Reducer.first(),10,'theta_v')
+    .setOptions({title: 'Solar Zenith ' + sza,
+      hAxis: {'title': 'theta_v',
+        ticks: [-90,-60,-30,0,30,60,90]},
+      vAxis: {'title': 'value',
+        viewWindow : {'min' : -3, 'max' : 3},
+        ticks : [-3,-2,-1,0,1,2,3]
+      },//
       pointSize: 5,
   });
   print(chart2);
@@ -96,9 +104,9 @@ var createPlot = function(sza,phi_i1,phi_v1){
 
 //principal plane, pi = 0 or 180
 //cross principal plane, pi = 90 or 270
-var ic = createPlot(33,0,180);
+var ic = createPlot(30,0,0);
 
-Map.addLayer(ee.Image(Math.PI).cos(),{},'power')
+//Map.addLayer(ee.Image(Math.PI).cos(),{},'power')
 Map.addLayer(ic,{},'ic')
 
 
