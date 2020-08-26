@@ -1,4 +1,11 @@
 
+var theta_p = function (theta, br){
+  var t1 = theta.tan().multiply(br);
+  var t2 = t1.where(t1.lt(0),0);
+  return t2.atan()
+}
+
+
 var calcKernel = function(theta_i1, theta_v1, phi_i1, phi_v1){
   var theta_i = ee.Image(theta_i1).multiply(Math.PI/180); // solar zenith angle
   var theta_v = ee.Image(theta_v1).multiply(Math.PI/180); // view zenith angle
@@ -24,26 +31,29 @@ var calcKernel = function(theta_i1, theta_v1, phi_i1, phi_v1){
   var h_b = 2;
   var b_r = 1;
   
-  //var theta_ip = (theta_i.tan().multiply(b_r)).atan();
-  //var theta_vp = (theta_v.tan().multiply(b_r)).atan();
+  var theta_ip = (theta_i.tan().multiply(b_r)).atan();
+  var theta_vp = (theta_v.tan().multiply(b_r)).atan();
 
-  var theta_ip = theta_i.toDouble();
-  var theta_vp = theta_v.toDouble();
+  //var theta_ip = theta_p(theta_i, b_r);//theta_i.toDouble();
+  //var theta_vp = theta_p(theta_v, b_r);//theta_v.toDouble();
   
-  var D = (theta_ip.tan().multiply(theta_ip.tan())
-    .add(theta_vp.tan().multiply(theta_vp.tan()))
+  var D = (theta_ip.tan().pow(2)
+    .add(theta_vp.tan().pow(2))
     .subtract(theta_ip.tan()
     .multiply(theta_vp.tan())
     .multiply(phi_r.cos())
     .multiply(2))).sqrt();
     
-  var cos_t = (D.multiply(D)
-    .add(theta_ip.tan()
+  var cos_t1 = (D.pow(2)
+    .add((theta_ip.tan()
     .multiply(theta_vp.tan())
-    .multiply(phi_r.sin()).pow(2)))
+    .multiply(phi_r.sin())).pow(2)))
     .sqrt()
     .multiply(h_b)
     .divide(theta_ip.cos().pow(-1).add(theta_vp.cos().pow(-1)))
+    
+  var cos_t2 = cos_t1.where(cos_t1.lt(-1),-1)
+  var cos_t = cos_t2.where(cos_t2.gt(1),1)
     
   var t = cos_t.acos()
   
@@ -74,9 +84,9 @@ var calcKernel = function(theta_i1, theta_v1, phi_i1, phi_v1){
 }
 
 var createPlot = function(sza,phi_i1,phi_v1){
-  var imageList = [calcKernel(sza,-90,phi_i1,phi_v1).set({'theta_v':-90,'theta_i' :sza})];
+  var imageList = [calcKernel(sza,-90,phi_i1,phi_v1).set({'theta_v':-90,'theta_i' :sza}).clip(roi)];
   for (var i = -80; i <= 90; i = i + 10){
-    imageList.push(calcKernel(sza,i,phi_i1,phi_v1).set({'theta_v':i,'theta_i' :sza}));
+    imageList.push(calcKernel(sza,i,phi_i1,phi_v1).clip(roi).set({'theta_v':i,'theta_i' :sza}));
   }
   //var c1 = calcKernel(sza,-90,phi_i1,phi_v1).set({'theta_v':-90,'theta_i' :sza});
   //var c2 = calcKernel(sza,-60,phi_i1,phi_v1).set({'theta_v':-60,'theta_i' :sza});
@@ -102,9 +112,9 @@ var createPlot = function(sza,phi_i1,phi_v1){
   return ic
 }
 
-//principal plane, pi = 0 or 180
-//cross principal plane, pi = 90 or 270
-var ic = createPlot(30,0,0);
+//principal plane: 0,0
+//cross principal plane: 0,90
+var ic = createPlot(60,0,90);
 
 //Map.addLayer(ee.Image(Math.PI).cos(),{},'power')
 Map.addLayer(ic,{},'ic')
