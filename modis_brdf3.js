@@ -1,7 +1,11 @@
 var brdf = require('users/ttaylorok/amazon:modis_kernels');
 
 var collection = ee.ImageCollection('MODIS/006/MYD09GA')
-  .filterDate('2018-08-01', '2018-12-01');
+  .merge(ee.ImageCollection('MODIS/006/MOD09GA'))
+  .filterDate('2018-08-01', '2018-08-31');
+
+//var collection = ee.ImageCollection('MODIS/006/MYD09GA')
+//  .filterDate('2018-01-01', '2018-12-31');
                 
 // mask clouds
 function maskMODIS(image) {
@@ -23,9 +27,7 @@ function maskMODIS(image) {
 
 
 //Map.addLayer(collection.first(),visParams,'modis');
-//Map.addLayer(cloudsRemoved.first(),visParams,'modis_mask');
- 
-var modis = collection.first();
+
 
 var addKernels = function(image){
   var theta_i = image.select('SolarZenith')//.multiply(0.01*Math.PI/180); // solar zenith angle
@@ -38,14 +40,14 @@ var addKernels = function(image){
     theta_v.multiply(0.01), phi_i.multiply(0.01), phi_v.multiply(0.01));
   
   // NOTE: IF ANY BANDS ARE MASKED, TOARRAY WILL MASK THE WHOLE PIXEL
-  var out1 = image.select(['sur_refl_b01'])
-    .addBands([ee.Image(1),kernels.select(['Kvol', 'Ksparse'])])
+  var out1 = image.addBands([ee.Image(1).rename('ones'),
+    kernels.select(['Kvol', 'Ksparse'])])
   
-  return out1.rename(['sur_refl_b01','ones','Kvol','Ksparse'])
+  return out1
 }
 
 var visParams = {bands : ['sur_refl_b01', 'sur_refl_b04', 'sur_refl_b03'],
-                min : 0, max : 6000};
+                min : 0, max : 3000};
                 
 var cloudsRemoved = collection
   .map(function(image){return image.clip(roi3)})
@@ -53,10 +55,10 @@ var cloudsRemoved = collection
 //var collection2 = cloudsRemoved.map(function(image){
 //  return image.clip(roi3)
 //});
-//Map.addLayer(cloudsRemoved,{},'cloudsRemoved')
+Map.addLayer(cloudsRemoved.median(),visParams,'cloudsRemoved')
 
 var numPixels = cloudsRemoved.count();
-var newMask = numPixels.select('sur_refl_b01').gt(10);
+var newMask = numPixels.select('sur_refl_b01').gt(20);
 //Map.addLayer(numPixels,{},'numPixels');
 
 var maskFew = function(image){
@@ -69,30 +71,39 @@ var masked = cloudsRemoved.map(maskFew);
 var withKernels = masked.map(addKernels); //CHANGE BACK TO MASKED or MASKEDMODIS
 //Map.addLayer(withKernels.select(['Ksparse','Kvol']), {}, 'withKernels');
 
-var countKernels = withKernels.count();
+//var countKernels = withKernels.count();
 //Map.addLayer(countKernels, {}, 'countKernels');
 
 // Convert to an array. Give the axes names for more readable code.
-var array = withKernels.toArray();
 var imageAxis = 0;
 var bandAxis = 1;
- 
-// Slice off the year and ndvi, and solve for the coefficients.
-var x = array.arraySlice(bandAxis, 1, 4);
-var y = array.arraySlice(bandAxis, 0, 1);
-var fit = x.matrixSolve(y);
-print(fit);
-Map.addLayer(fit,{},'fit');
-Map.addLayer(x,{},'x');
+
+var red = withKernels.select(['sur_refl_b01','ones','Kvol','Ksparse']).toArray();
+var x_red = red.arraySlice(bandAxis, 1, 4);
+var y_red = red.arraySlice(bandAxis, 0, 1).divide(10000);
+var fit_red = x_red.matrixSolve(y_red);
+
+var green = withKernels.select(['sur_refl_b04','ones','Kvol','Ksparse']).toArray();
+var x_green = green.arraySlice(bandAxis, 1, 4);
+var y_green = green.arraySlice(bandAxis, 0, 1).divide(10000);
+var fit_green = x_green.matrixSolve(y_green);
+
+var blue = withKernels.select(['sur_refl_b03','ones','Kvol','Ksparse']).toArray();
+var x_blue = blue.arraySlice(bandAxis, 1, 4);
+var y_blue = blue.arraySlice(bandAxis, 0, 1).divide(10000);
+var fit_blue = x_blue.matrixSolve(y_blue);
+//print(fit_red);
+//Map.addLayer(fit_red,{},'fit_red');
+//Map.addLayer(x_red,{},'x_red');
 //Map.addLayer(y,{},'y');
 
-var mm = x.matrixMultiply(fit);
+var mm = x_red.matrixMultiply(fit_red);
 print('mm',mm);
-Map.addLayer(mm,{},'mm');
+//Map.addLayer(mm,{},'mm');
 
-var fiso = fit.arrayGet([0, 0]);
-var fvol = fit.arrayGet([1, 0]);
-var fgeo = fit.arrayGet([2, 0]);
+//var fiso = fit.arrayGet([0, 0]);
+//var fvol = fit.arrayGet([1, 0]);
+//var fgeo = fit.arrayGet([2, 0]);
 
 var params = ee.ImageCollection('MODIS/006/MCD43A1')
   .filterDate('2018-08-01', '2018-12-01')
@@ -106,45 +117,50 @@ var params = ee.ImageCollection('MODIS/006/MCD43A1')
 // addBands(ones, kvol, ksparse)
 // map function to collection
 
-var lat = ee.Image.pixelLonLat().select('latitude').multiply(Math.PI).divide(180);
+var lat = ee.Image.pixelLonLat().select('latitude').multiply(Math.PI/180);
 
 var calcNadir = function(image){
   var date = ee.Date(image.get('system:time_start'));
   var year = date.get('year');
   var yearStart = ee.Date.fromYMD(year,1,1);
-  var days = date.difference(yearStart,'day').toFloat();
+  var days = date.difference(yearStart,'day').toDouble();
   
   var d = ((((ee.Image(days).subtract(173)).multiply(0.98563*Math.PI/180))
     .cos()).multiply(0.39795)).asin().rename('d'); // solar declination
-  var sn = lat.subtract(d).rename('sn'); // zenith at solar noon
+  var sn = (lat.subtract(d)).multiply(180/(Math.PI)).rename('sn'); // zenith at solar noon
   
-  return image.addBands([d,sn])
+  return image.addBands([d.multiply(180/Math.PI).rename('d'),sn,ee.Image(days).toDouble().rename('days')])
+    .addBands([image.select('SolarZenith').multiply(0.01).rename('szc'),image.select('SensorZenith').multiply(0.01).rename('vzc')])
 }
 
-var test_z = collection.map(calcNadir);
-Map.addLayer(test_z,{},'zenith')
+var withNadir = masked.map(calcNadir);
+Map.addLayer(withNadir.select(['szc','vzc','d','sn']),{},'withNadir')
 
-var kernels_nadir = brdf.calcKernel(ee.Image(0),
-  ee.Image(0), ee.Image(0), ee.Image(0));
-  
-var nadir_matrix = ee.ImageCollection(ee.Image(1)
-  .addBands(kernels_nadir.select(['Kvol', 'Ksparse'])))
-  .toArray()
-  //.arrayTranspose(1,0)//.arrayReshape(ee.Image(3).toArray(),2)
+var calcNadir = function(image){
+  var kernels_nadir = brdf.calcKernel(image.select('sn'),
+    ee.Image(0), ee.Image(0), ee.Image(0));
+    
+  var nadir_matrix = ee.ImageCollection(ee.Image(1)
+    .addBands(kernels_nadir.select(['Kvol', 'Ksparse'])))
+    .toArray()
+    
+  var reflectance = nadir_matrix.matrixMultiply(fit_red).arrayGet([0,0])
+    .addBands(nadir_matrix.matrixMultiply(fit_green).arrayGet([0,0]))
+    .addBands(nadir_matrix.matrixMultiply(fit_blue).arrayGet([0,0]))
 
+  return reflectance;
+}
+
+//.arrayTranspose(1,0)//.arrayReshape(ee.Image(3).toArray(),2)
 //var fit2 = fit.arrayReshape(ee.Image(3).toArray(),1)
-  
 //var as = nadir_matrix.arraySlice(1,0,2)
 
-
-var reflectance = nadir_matrix.matrixMultiply(fit).arrayGet([0,0])
-
-Map.addLayer(nadir_matrix,{},'nadir_matrix')
+//Map.addLayer(nadir_matrix,{},'nadir_matrix')
 //Map.addLayer(fit2,{},'fit2')
 //Map.addLayer(as,{},'as')
-Map.addLayer(reflectance,{},'reflectance')
-  
 
+var reflectance = withNadir.map(calcNadir)
+Map.addLayer(reflectance.mean(),{min:0,max:0.3},'reflectance')
 
 //Map.addLayer(fiso, {}, 'fiso');
 //Map.addLayer(fvol, {}, 'fvol');
