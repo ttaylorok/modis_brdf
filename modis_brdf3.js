@@ -2,38 +2,41 @@ var brdf = require('users/ttaylorok/amazon:modis_kernels');
 
 var collection = ee.ImageCollection('MODIS/006/MYD09GA')
   .merge(ee.ImageCollection('MODIS/006/MOD09GA'))
-  .filterDate('2018-09-01', '2018-11-01')
+  .filterDate('2018-09-01','2018-12-01')
   //.sort('system:time_start');
 
 var visParams = {bands : ['sur_refl_b01', 'sur_refl_b04', 'sur_refl_b03'],
                 min : 0, max : 3000};
+             
 Map.addLayer(collection,visParams,'collection');
 
 var lat = ee.Image.pixelLonLat().select('latitude').multiply(Math.PI/180);
 
 // mask clouds
 function maskMODIS(image) {
-  // Bits 0-1 and 2 are cloud could and shadow, respectively.
   var cloudBitMask = 3;
   var shadowBitMask = 4;
+  var adjacentBitMask = 1 << 13;
+  var cloudInternalBitMask = 1 << 10;
 
-  // Get the pixel QA band.
   var qa = image.select('state_1km');
 
-  // Both flags should be set to zero, indicating clear conditions.
-  var mask = qa.bitwiseAnd(cloudBitMask).eq(0)
-    .and(qa.bitwiseAnd(shadowBitMask).eq(0));
+  var cloudMask = qa.bitwiseAnd(cloudBitMask).eq(0);
+  var shadowMask = qa.bitwiseAnd(shadowBitMask).eq(0);
+  var adjacentMask = qa.bitwiseAnd(adjacentBitMask).eq(0);
+  var cloudInternalMask = qa.bitwiseAnd(cloudInternalBitMask).eq(0);
+  var mask = cloudMask.and(shadowMask).and(adjacentMask).and(cloudInternalMask);
 
-  // Return the masked image, scaled to reflectance, without the QA bands.
-  return image.updateMask(mask).clip(roi3)
-      .copyProperties(image, ["system:time_start"]);
+  return image.updateMask(mask).clip(roi)
+      //.copyProperties(image, ["system:time_start"]);
 }
 
 
-var cloudsRemoved = collection
-  .map(function(image){return image.clip(roi3)})
-  .map(maskMODIS);
-Map.addLayer(cloudsRemoved,visParams,'cloudsRemoved')
+var cloudsRemoved = collection.map(maskMODIS);
+  //.map(function(image){return image.clip(roi3)})
+  
+  
+Map.addLayer(cloudsRemoved.median(),visParams,'cloudsRemoved')
 
 var numPixels = cloudsRemoved.count();
 var newMask = numPixels.select('sur_refl_b01').gt(10);
@@ -76,7 +79,7 @@ var addKernels = function(image){
 
 
 var withKernels = masked.map(addKernels);
-Map.addLayer(withKernels.select(['Ksparse','Kvol']), {}, 'withKernels');
+//Map.addLayer(withKernels.select(['Ksparse','Kvol']), {}, 'withKernels');
 
 //var countKernels = withKernels.count();
 //Map.addLayer(countKernels, {}, 'countKernels');
@@ -100,8 +103,8 @@ var x_blue = blue.arraySlice(bandAxis, 1, 4);
 var y_blue = blue.arraySlice(bandAxis, 0, 1).divide(10000);
 var fit_blue = x_blue.matrixSolve(y_blue);
 //print(fit_red);
-Map.addLayer(fit_red,{},'fit_red');
-Map.addLayer(x_red,{},'x_red');
+//Map.addLayer(fit_red,{},'fit_red');
+//Map.addLayer(x_red,{},'x_red');
 //Map.addLayer(y,{},'y');
 
 //var mm = x_red.matrixMultiply(fit_red);
@@ -147,7 +150,7 @@ var correctNadir = function(image){
 //Map.addLayer(as,{},'as')
 
 var reflectance = withKernels.map(correctNadir)
-Map.addLayer(reflectance.select('red_orig','red_nadir'),{min:0,max:0.3},'reflectance')
+Map.addLayer(reflectance.select('red_nadir','green_nadir','blue_nadir'),{min:0,max:0.3},'reflectance')
 
 var chart1 = ui.Chart.image.doySeries(
   reflectance.select('red_orig','red_nadir'),
