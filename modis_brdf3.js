@@ -2,8 +2,8 @@ var brdf = require('users/ttaylorok/amazon:modis_kernels');
 
 var collection = ee.ImageCollection('MODIS/006/MYD09GA')
   .merge(ee.ImageCollection('MODIS/006/MOD09GA'))
-  .filterDate('2018-09-01','2018-12-01')
-  //.sort('system:time_start');
+  .filterDate('2018-09-01','2018-10-01')
+  .sort('system:time_start');
 
 var visParams = {bands : ['sur_refl_b01', 'sur_refl_b04', 'sur_refl_b03'],
                 min : 0, max : 3000};
@@ -39,12 +39,13 @@ var cloudsRemoved = collection.map(maskMODIS);
 Map.addLayer(cloudsRemoved.median(),visParams,'cloudsRemoved')
 
 var numPixels = cloudsRemoved.count();
-var newMask = numPixels.select('sur_refl_b01').gt(10);
+var newMask = numPixels.select('sur_refl_b01').gt(5);
 var maskFew = function(image){
   return image.updateMask(newMask);
 }
 
 var masked = cloudsRemoved.map(maskFew);
+Map.addLayer(masked,visParams,'masked')
 
 var addKernels = function(image){
   // calculate kernals
