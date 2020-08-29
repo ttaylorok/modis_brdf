@@ -1,14 +1,67 @@
 var brdf = require('users/ttaylorok/amazon:modis_kernels');
 
-var collection = ee.ImageCollection('MODIS/006/MYD09GA')
-  .merge(ee.ImageCollection('MODIS/006/MOD09GA'))
-  .filterDate('2018-09-01','2018-10-01')
-  .sort('system:time_start');
+var START_DATE = '01-01'// MM-DD
+var END_DATE = '04-01' // MM-DD
+var YEARS = ['2018','2019']
+var COMBINED = true // combine terra dna aqua
+var MIN_SAMPLES = 10
+
+var getData = function(start, end, year, combined){
+  var c = ee.ImageCollection('MODIS/006/MYD09GA');
+  if(COMBINED){
+    c = c.merge('MODIS/006/MOD09GA')
+  }
+  return c.filterDate(year+'-'+start, year+'-'+end);
+}
+
+var collection = getData(START_DATE, END_DATE, YEARS[0], COMBINED);
+for(var i = 1; i < YEARS.length; i++){
+  collection = collection.merge(getData(START_DATE, END_DATE, YEARS[i], COMBINED))
+}
+var proj = collection.first().select('sur_refl_b01').projection()
+print(proj)
+
+var qcBits = function(image){
+  var cloudBitMask = 3;
+  var shadowBitMask = 4;
+  var adjacentBitMask = 1 << 13;
+  var cloudInternalBitMask = 1 << 10;
+
+  var qa = image.select('state_1km');
+
+  var cloudMask = qa.bitwiseAnd(cloudBitMask).eq(0).rename('cloudMask');
+  var shadowMask = qa.bitwiseAnd(shadowBitMask).eq(0).rename('shadowMask');
+  var adjacentMask = qa.bitwiseAnd(adjacentBitMask).eq(0).rename('adjacentMask');
+  var cloudInternalMask = qa.bitwiseAnd(cloudInternalBitMask).eq(0).rename('cloudInternalMask');
+  //var mask = cloudMask.and(shadowMask).and(adjacentMask).and(cloudInternalMask);
+
+  return image.addBands([cloudMask,shadowMask,adjacentMask,cloudInternalMask]);
+}
+
+var collectionQC = collection.map(qcBits);
 
 var visParams = {bands : ['sur_refl_b01', 'sur_refl_b04', 'sur_refl_b03'],
-                min : 0, max : 3000};
+                min : 0, max : 2000};
+
+// 2018-01-27 has two images
+Map.addLayer(collection.filterDate('2018-01-27').first(),visParams,'collection');
+//  .filterMetadata('system:index','equals',0)
+//.reduce(ee.Reducer.last())
+Map.addLayer(collectionQC.filterDate('2018-01-27').first(),visParams,'collectionQC');
+//.reduce(ee.Reducer.last())
+//var collection = collection2018//.merge(collection2019).sort('system:time_start');
+
+var corrected = ee.ImageCollection('MODIS/006/MCD43A4')
+  .filterDate('2018-01-01','2018-04-01');
+  
+Map.addLayer(corrected.median(),
+  {bands:['Nadir_Reflectance_Band1','Nadir_Reflectance_Band4','Nadir_Reflectance_Band3'],
+    min:0,max:2000
+  },'corrected')
+
+
              
-Map.addLayer(collection,visParams,'collection');
+
 
 var lat = ee.Image.pixelLonLat().select('latitude').multiply(Math.PI/180);
 
@@ -27,7 +80,7 @@ function maskMODIS(image) {
   var cloudInternalMask = qa.bitwiseAnd(cloudInternalBitMask).eq(0);
   var mask = cloudMask.and(shadowMask).and(adjacentMask).and(cloudInternalMask);
 
-  return image.updateMask(mask).clip(roi)
+  return image.updateMask(mask)//.clip(roi)
       //.copyProperties(image, ["system:time_start"]);
 }
 
@@ -36,16 +89,20 @@ var cloudsRemoved = collection.map(maskMODIS);
   //.map(function(image){return image.clip(roi3)})
   
   
-Map.addLayer(cloudsRemoved.median(),visParams,'cloudsRemoved')
+//Map.addLayer(cloudsRemoved.median(),visParams,'cloudsRemoved')
 
 var numPixels = cloudsRemoved.count();
-var newMask = numPixels.select('sur_refl_b01').gt(5);
+var newMask = numPixels.select('sur_refl_b01').gt(MIN_SAMPLES);
 var maskFew = function(image){
   return image.updateMask(newMask);
 }
 
 var masked = cloudsRemoved.map(maskFew);
-Map.addLayer(masked,visParams,'masked')
+Map.addLayer(masked.median(),visParams,'masked_median')
+//Map.addLayer(masked.last(),visParams,'masked_last')
+
+var visParams2 = {bands:['red_nadir','green_nadir','blue_nadir'], min:0, max:0.2}
+Map.addLayer(refl5, visParams2, 'ref4')
 
 var addKernels = function(image){
   // calculate kernals
@@ -151,27 +208,67 @@ var correctNadir = function(image){
 //Map.addLayer(as,{},'as')
 
 var reflectance = withKernels.map(correctNadir)
-Map.addLayer(reflectance.select('red_nadir','green_nadir','blue_nadir'),{min:0,max:0.3},'reflectance')
+//Map.addLayer(reflectance.select('red_nadir','green_nadir','blue_nadir'),{min:0,max:0.3},'reflectance')
 
 var chart1 = ui.Chart.image.doySeries(
   reflectance.select('red_orig','red_nadir'),
-  mypoint, ee.Reducer.mean(),10,ee.Reducer.mean())
+  mypoint, ee.Reducer.first(),10,ee.Reducer.first())
   .setChartType('ScatterChart')
 print(chart1)
 
+var chart1a = ui.Chart.image.doySeries(
+  reflectance.select('SolarZenith','SensorZenith','SolarAzimuth','SensorAzimuth'),
+  mypoint, ee.Reducer.first(),10,ee.Reducer.first())
+  .setChartType('ScatterChart')
+print(chart1a)
+
+//var pix = reflectance.select('red_orig').getRegion(mypoint, 10);
+//print('pix',pix.slice(1,-1).toArray())
+
+var xp = reflectance.select('red_orig').toArray()
+  .reduceRegion(ee.Reducer.first(),mypoint,10)
+var yp = reflectance.select('sur_refl_b01').toArray()//.divide(10000)
+  .reduceRegion(ee.Reducer.first(),mypoint,10)
+
+//var chart_1c = ui.Chart.feature.byFeature(pixel, 'green_orig','green_nadir')
+//print(chart_1c)
+
+var chart1b = ui.Chart.array.values(yp.toArray(),0,xp.toArray()).setOptions({
+      title: 'Fitted Values',
+      hAxis: {'title': 'red_orig'},
+      vAxis: {'title': 'sur_refl_b01'},
+      pointSize: 5,
+});
+print(chart1b);
+
 var chart2 = ui.Chart.image.doySeries(
   reflectance.select('green_orig','green_nadir'),
-  mypoint, ee.Reducer.mean(),10,ee.Reducer.mean())
+  mypoint, ee.Reducer.first(),10,ee.Reducer.first())
   .setChartType('ScatterChart')
 print(chart2)
 
 var chart3 = ui.Chart.image.doySeries(
   reflectance.select('blue_orig','blue_nadir'),
-  mypoint, ee.Reducer.mean(),10,ee.Reducer.mean())
+  mypoint, ee.Reducer.first(),10,ee.Reducer.first())
   .setChartType('ScatterChart')
 print(chart3)
 
+chart1.onClick(function(xValue, yValue, seriesName) {
+  if (!xValue) return;  // Selection was cleared.
 
+  var equalDate = ee.Date.fromYMD(2018,1,1).advance(xValue-1,'day')
+  var image1 = ee.Image(collection.filterDate(equalDate).first());
+  var image2 = ee.Image(masked.filterDate(equalDate).first());
+  var image3 = ee.Image(reflectance.filterDate(equalDate).first());
+  var layer1 = ui.Map.Layer(image1, visParams,'collection');
+  var layer2 = ui.Map.Layer(image2, visParams,'masked');
+  var layer3 = ui.Map.Layer(image3,
+    {bands:['red_orig','green_orig','blue_orig'],min:0,max:0.2},'reflectance');
+  Map.layers().reset([layer1,layer2,layer3]);
+});
+
+Export.image.toAsset(reflectance.median(),
+  "reflectance_ok_jan-march_18-19_orig_proj","reflectance_ok_jan-march_18-19",null,null,roi,500,proj.crs())
 
 //Map.addLayer(fiso, {}, 'fiso');
 //Map.addLayer(fvol, {}, 'fvol');
