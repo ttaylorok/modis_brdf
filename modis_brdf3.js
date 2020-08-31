@@ -5,7 +5,7 @@ var END_DATE = '02-01' // MM-DD
 var YEARS = ['2018']
 var COMBINED = true // combine terra dna aqua
 var MIN_SAMPLES = 10
-var PERCENTILE_FILT = [5,95]
+//var PERCENTILE_FILT = [5,95]
 
 var getData = function(start, end, year, combined){
   var c = ee.ImageCollection('MODIS/006/MOD09GA');
@@ -123,30 +123,36 @@ function maskMODIS(image) {
 var cloudsRemoved = collection.map(maskMODIS);
   //.map(function(image){return image.clip(roi3)})
   
-var percentiles = cloudsRemoved
+var intMean = cloudsRemoved
   .select(['sur_refl_b01','sur_refl_b04','sur_refl_b03'])
-  .reduce(ee.Reducer.percentile(PERCENTILE_FILT))
+  .reduce(ee.Reducer.intervalMean(20,80))
+  
+print(intMean)
+
+var calcDistance = function(image){
+  var d1 = image.select('sur_refl_b01').subtract(intMean.select('sur_refl_b01_mean'))
+  var d4 = image.select('sur_refl_b04').subtract(intMean.select('sur_refl_b04_mean'))
+  var d3 = image.select('sur_refl_b03').subtract(intMean.select('sur_refl_b03_mean'))
+  var dist = ((d1.pow(2)).add(d4.pow(2)).add(d3.pow(2))).sqrt().rename('dist')
+  return image.addBands(dist)
+}
+
+var withDist = cloudsRemoved.map(calcDistance)
+  
+var percentiles = withDist
+  .select('dist')
+  .reduce(ee.Reducer.percentile([90]))
 
 Map.addLayer(percentiles,{},'percentiles')
 
 var filtPercentiles = function(image){
-  var redMask = (image.select('sur_refl_b01')
-    .gte(percentiles.select('sur_refl_b01_p5')))
-    .and(image.select('sur_refl_b01')
-    .lte(percentiles.select('sur_refl_b01_p95')));
-  var greenMask = (image.select('sur_refl_b04')
-    .gte(percentiles.select('sur_refl_b04_p5')))
-    .and(image.select('sur_refl_b04')
-    .lte(percentiles.select('sur_refl_b04_p95')));
-  var blueMask = (image.select('sur_refl_b03')
-    .gte(percentiles.select('sur_refl_b03_p5')))
-    .and(image.select('sur_refl_b03')
-    .lte(percentiles.select('sur_refl_b03_p95')));
-    
-  return image.updateMask(redMask.and(greenMask).and(blueMask))
+  var distMask = image.select('dist')
+    .lte(percentiles.select('dist_p90'));
+
+  return image.updateMask(distMask)
 }
 
-var pFilt = cloudsRemoved.map(filtPercentiles)
+var pFilt = withDist.map(filtPercentiles)
 
 //Map.addLayer(pFilt.median(),visParams,'pFilt')
 
@@ -160,10 +166,30 @@ var masked = pFilt.map(maskFew);
 var masked_median = masked.median()
 
 
-Map.addLayer(masked,visParams,'masked')
+Map.addLayer(masked_median,visParams,'masked')
+Map.addLayer(cloudsRemoved,visParams,'cloudsRemoved')
+
+Export.image.toDrive({
+  image: masked_median,
+  description: 'masked_median_full_epsg4326',
+  scale: 500,
+  region: roi,
+  crs:'EPSG:4326'
+});
+
+Export.image.toDrive({
+  image: refl9,
+  description: 'reflectance_region_jan_18_pfilt_10-90_full_epsg4326',
+  scale: 500,
+  region: roi,
+  crs:'EPSG:4326'
+});
+
+
 //Map.addLayer(masked.last(),visParams,'masked_last')
 
 var visParams2 = {bands:['red_nadir','green_nadir','blue_nadir'], min:0, max:0.2}
+Map.addLayer(refl9, visParams2, 'ref9')
 Map.addLayer(refl8, visParams2, 'ref8')
 
 var addKernels = function(image){
@@ -362,7 +388,7 @@ chart1.onClick(function(xValue, yValue, seriesName) {
 });
 
 Export.image.toAsset(reflectance.median(),
-  "reflectance_region_jan_18_pfilt","reflectance_region_jan_18_pfilt",null,null,roi,500,proj.crs())
+  "reflectance_region_jan_18_pfilt_10-90_reproj","reflectance_region_jan_18_pfilt_10-90_reproj",null,null,roi,500)
 
 //Map.addLayer(fiso, {}, 'fiso');
 //Map.addLayer(fvol, {}, 'fvol');
